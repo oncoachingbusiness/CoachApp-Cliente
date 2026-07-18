@@ -15,12 +15,14 @@ type AuthContextValue = {
   client: Client | null;
   loading: boolean;
   signIn: (email: string, password: string) => Promise<{ error: string | null }>;
+  refreshClient: () => Promise<void>;
 };
 
 const AuthContext = createContext<AuthContextValue | undefined>(undefined);
 
 async function fetchClient(userId: string): Promise<Client | null> {
-  const { data } = await supabase.from('clients').select('*').eq('user_id', userId).single();
+  const { data, error } = await supabase.from('clients').select('*').eq('user_id', userId).single();
+  console.log('[fetchClient] userId:', userId, 'data:', data, 'error:', error);
   return (data as Client) ?? null;
 }
 
@@ -51,8 +53,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     return { error: error ? error.message : null };
   }
 
+  async function refreshClient() {
+    if (!session) return;
+    setClient(await fetchClient(session.user.id));
+  }
+
   return (
-    <AuthContext.Provider value={{ session, client, loading, signIn }}>
+    <AuthContext.Provider value={{ session, client, loading, signIn, refreshClient }}>
       {children}
     </AuthContext.Provider>
   );
