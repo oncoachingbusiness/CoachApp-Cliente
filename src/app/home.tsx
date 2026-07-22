@@ -1,7 +1,9 @@
 import { router } from 'expo-router';
-import { useEffect, useState } from 'react';
-import { ActivityIndicator, Alert, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { useCallback, useEffect, useRef, useState } from 'react';
+import { ActivityIndicator, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
 
+import { Sidebar } from '@/components/Sidebar';
 import { useAuth } from '@/lib/auth-context';
 import { supabase } from '@/lib/supabase';
 
@@ -25,8 +27,12 @@ const rawDateLabel = new Intl.DateTimeFormat('es-ES', {
 }).format(new Date());
 const TODAY_LABEL = rawDateLabel.charAt(0).toUpperCase() + rawDateLabel.slice(1);
 
+// Fecha local (mismo cálculo que el web: eDateStr en ClientProfile.jsx), para
+// que coincida con las fechas que el web guardó en client_entrenamientos.
 function toISODate(date: Date): string {
-  return date.toISOString().slice(0, 10);
+  const dt = new Date(date);
+  dt.setMinutes(dt.getMinutes() - dt.getTimezoneOffset());
+  return dt.toISOString().slice(0, 10);
 }
 
 function computeStreakDays(dates: string[]): number {
@@ -62,8 +68,8 @@ async function fetchDashboardData(clientId: string): Promise<DashboardData> {
   const [assignmentRes, entrenamientosRes, metricsRes, checkinsRes, messagesRes] =
     await Promise.all([
       supabase
-        .from('client_assignments')
-        .select('workout_name, program_name')
+        .from('client_entrenamientos')
+        .select('workout_name, plan_name')
         .eq('client_id', clientId)
         .eq('date', todayISO)
         .maybeSingle(),
@@ -106,7 +112,7 @@ async function fetchDashboardData(clientId: string): Promise<DashboardData> {
 
   return {
     workoutToday: assignmentRes.data
-      ? { name: assignmentRes.data.workout_name, programName: assignmentRes.data.program_name }
+      ? { name: assignmentRes.data.workout_name, programName: assignmentRes.data.plan_name }
       : null,
     streakDays: computeStreakDays((entrenamientosRes.data ?? []).map((row) => row.date)),
     lastWeightKg: metricsRes.data?.weight ?? null,
@@ -119,36 +125,65 @@ export default function HomeScreen() {
   const { client } = useAuth();
   const [dashboard, setDashboard] = useState<DashboardData | null>(null);
   const [loading, setLoading] = useState(true);
+  const [menuOpen, setMenuOpen] = useState(false);
 
-  useEffect(() => {
-    if (!client?.id) return;
+  // Refresca sin parpadeo: solo muestra el spinner en la primera carga.
+  const loadedRef = useRef(false);
 
-    let cancelled = false;
-    setLoading(true);
-
-    fetchDashboardData(client.id)
-      .then((data) => {
-        if (!cancelled) setDashboard(data);
-      })
-      .catch((error) => {
-        console.log('[home] fetchDashboardData error:', error);
-        if (!cancelled) setDashboard(null);
-      })
-      .finally(() => {
-        if (!cancelled) setLoading(false);
-      });
-
-    return () => {
-      cancelled = true;
-    };
+  const loadDashboard = useCallback(async () => {
+    const clientId = client?.id;
+    if (!clientId) return;
+    if (!loadedRef.current) setLoading(true);
+    try {
+      setDashboard(await fetchDashboardData(clientId));
+    } catch (error) {
+      console.log('[home] fetchDashboardData error:', error);
+    } finally {
+      loadedRef.current = true;
+      setLoading(false);
+    }
   }, [client?.id]);
 
+  useEffect(() => {
+    loadDashboard();
+  }, [loadDashboard]);
+
+  // Realtime: mismos cambios que ve el coach (patrón del panel web) — refresca el
+  // dashboard cuando llegan mensajes nuevos o cambia el entrenamiento asignado.
+  useEffect(() => {
+    const clientId = client?.id;
+    if (!clientId) return;
+
+    const channel = supabase
+      .channel(`home-${clientId}`)
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'messages', filter: `client_id=eq.${clientId}` },
+        () => loadDashboard()
+      )
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'client_entrenamientos', filter: `client_id=eq.${clientId}` },
+        () => loadDashboard()
+      )
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
+  }, [client?.id, loadDashboard]);
+
   return (
-    <ScrollView style={styles.container} contentContainerStyle={styles.content}>
-      <View style={styles.header}>
-        <Text style={styles.greeting}>Hola, {client?.name ?? 'cliente'}</Text>
-        <Text style={styles.date}>{TODAY_LABEL}</Text>
-      </View>
+    <SafeAreaView style={styles.safeArea} edges={['top']}>
+      <ScrollView style={styles.container} contentContainerStyle={styles.content}>
+        <Pressable style={styles.menuButton} onPress={() => setMenuOpen(true)} hitSlop={8}>
+          <Text style={styles.menuIcon}>☰</Text>
+        </Pressable>
+
+        <View style={styles.header}>
+          <Text style={styles.greeting}>Hola, {client?.name ?? 'cliente'}</Text>
+          <Text style={styles.date}>{TODAY_LABEL}</Text>
+        </View>
 
       <Pressable style={styles.featuredCard} onPress={() => router.push('/entrenamiento-hoy')}>
         <Text style={styles.featuredLabel}>Entrenamiento de hoy</Text>
@@ -187,27 +222,39 @@ export default function HomeScreen() {
         </Text>
       </Pressable>
 
-      <Pressable
-        style={styles.listRow}
-        onPress={() => Alert.alert('Próximamente', 'Los mensajes con tu coach estarán disponibles pronto.')}
-      >
+      <Pressable style={styles.listRow} onPress={() => router.push('/mensajes')}>
         <Text style={styles.listIcon}>💬</Text>
         <Text style={styles.listTitle}>Mensaje de tu coach</Text>
         <Text style={styles.listStatus}>
           {loading ? '—' : dashboard?.hasUnreadMessage ? 'Sin leer' : 'Al día'}
         </Text>
       </Pressable>
-    </ScrollView>
+      </ScrollView>
+
+      <Sidebar visible={menuOpen} onClose={() => setMenuOpen(false)} />
+    </SafeAreaView>
   );
 }
 
 const styles = StyleSheet.create({
+  safeArea: {
+    flex: 1,
+  },
   container: {
     flex: 1,
   },
   content: {
     padding: 24,
     gap: 16,
+  },
+  menuButton: {
+    alignSelf: 'flex-start',
+    padding: 4,
+    marginBottom: 4,
+  },
+  menuIcon: {
+    fontSize: 26,
+    lineHeight: 28,
   },
   header: {
     gap: 4,

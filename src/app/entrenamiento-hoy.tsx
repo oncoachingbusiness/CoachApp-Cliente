@@ -1,5 +1,5 @@
 import { router } from 'expo-router';
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import {
   ActivityIndicator,
   Pressable,
@@ -65,11 +65,10 @@ export default function EntrenamientoHoyScreen() {
   const [workoutDone, setWorkoutDone] = useState(false);
   const [saving, setSaving] = useState(false);
 
-  useEffect(() => {
-    if (!client?.id) return;
-    let cancelled = false;
-
-    async function load(clientId: string) {
+  const load = useCallback(async () => {
+    const clientId = client?.id;
+    if (!clientId) return;
+    try {
       // Entrenamiento asignado para hoy (la proyección de ciclo ya está
       // materializada por el web: una fila por fecha, descanso = sin fila).
       const todayRes = await supabase
@@ -81,11 +80,9 @@ export default function EntrenamientoHoyScreen() {
 
       if (todayRes.data) {
         const row = todayRes.data as WorkoutRow;
-        if (!cancelled) {
-          setCompletedIdx(new Set(row.ejercicios_completados ?? []));
-          setWorkoutDone(!!row.completado);
-          setState({ kind: 'workout', row });
-        }
+        setCompletedIdx(new Set(row.ejercicios_completados ?? []));
+        setWorkoutDone(!!row.completado);
+        setState({ kind: 'workout', row });
         return;
       }
 
@@ -98,20 +95,35 @@ export default function EntrenamientoHoyScreen() {
         .gte('date', TODAY)
         .limit(1);
 
-      if (!cancelled) {
-        setState({ kind: (anyRes.data ?? []).length > 0 ? 'rest' : 'no-program' });
-      }
-    }
-
-    load(client.id).catch((error) => {
+      setState({ kind: (anyRes.data ?? []).length > 0 ? 'rest' : 'no-program' });
+    } catch (error) {
       console.log('[entrenamiento-hoy] load error:', error);
-      if (!cancelled) setState({ kind: 'no-program' });
-    });
+      setState({ kind: 'no-program' });
+    }
+  }, [client?.id]);
+
+  useEffect(() => {
+    load();
+  }, [load]);
+
+  // Realtime: si el coach asigna o cambia el entrenamiento, se refleja solo.
+  useEffect(() => {
+    const clientId = client?.id;
+    if (!clientId) return;
+
+    const channel = supabase
+      .channel(`entrenamiento-hoy-${clientId}`)
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'client_entrenamientos', filter: `client_id=eq.${clientId}` },
+        () => load()
+      )
+      .subscribe();
 
     return () => {
-      cancelled = true;
+      supabase.removeChannel(channel);
     };
-  }, [client?.id]);
+  }, [client?.id, load]);
 
   async function toggleExercise(index: number) {
     if (state.kind !== 'workout') return;

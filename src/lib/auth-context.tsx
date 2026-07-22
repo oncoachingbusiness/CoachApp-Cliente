@@ -7,6 +7,7 @@ type Client = {
   id: string;
   user_id: string;
   name: string;
+  email?: string;
   [key: string]: unknown;
 };
 
@@ -15,6 +16,7 @@ type AuthContextValue = {
   client: Client | null;
   loading: boolean;
   signIn: (email: string, password: string) => Promise<{ error: string | null }>;
+  signOut: () => Promise<void>;
   refreshClient: () => Promise<void>;
 };
 
@@ -33,6 +35,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   useEffect(() => {
     supabase.auth.getSession().then(async ({ data }) => {
+      // El WebSocket de Realtime usa un token propio: sin esto, RLS lo evalúa
+      // como anónimo y no entrega ninguna fila protegida (mensajes, etc.).
+      supabase.realtime.setAuth(data.session?.access_token ?? null);
       setSession(data.session);
       if (data.session) {
         setClient(await fetchClient(data.session.user.id));
@@ -41,6 +46,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     });
 
     const { data: listener } = supabase.auth.onAuthStateChange(async (_event, newSession) => {
+      supabase.realtime.setAuth(newSession?.access_token ?? null);
       setSession(newSession);
       setClient(newSession ? await fetchClient(newSession.user.id) : null);
     });
@@ -53,13 +59,17 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     return { error: error ? error.message : null };
   }
 
+  async function signOut() {
+    await supabase.auth.signOut();
+  }
+
   async function refreshClient() {
     if (!session) return;
     setClient(await fetchClient(session.user.id));
   }
 
   return (
-    <AuthContext.Provider value={{ session, client, loading, signIn, refreshClient }}>
+    <AuthContext.Provider value={{ session, client, loading, signIn, signOut, refreshClient }}>
       {children}
     </AuthContext.Provider>
   );
