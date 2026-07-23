@@ -102,13 +102,14 @@ async function fetchDashboardData(clientId: string): Promise<DashboardData> {
         .limit(1),
     ]);
 
-  console.log('[home] dashboard fetch errors:', {
-    assignment: assignmentRes.error,
-    entrenamientos: entrenamientosRes.error,
-    metrics: metricsRes.error,
-    checkins: checkinsRes.error,
-    messages: messagesRes.error,
-  });
+  const fetchErrors = [
+    assignmentRes.error,
+    entrenamientosRes.error,
+    metricsRes.error,
+    checkinsRes.error,
+    messagesRes.error,
+  ].filter(Boolean);
+  if (fetchErrors.length) console.log('[home] dashboard fetch errors:', fetchErrors);
 
   return {
     workoutToday: assignmentRes.data
@@ -185,7 +186,7 @@ export default function HomeScreen() {
           <Text style={styles.date}>{TODAY_LABEL}</Text>
         </View>
 
-      <Pressable style={styles.featuredCard} onPress={() => router.push('/entrenamiento-hoy')}>
+      <Pressable style={styles.featuredCard} onPress={() => router.push('/entrenamiento-dia')}>
         <Text style={styles.featuredLabel}>Entrenamiento de hoy</Text>
         {loading ? (
           <ActivityIndicator style={styles.inlineLoader} />

@@ -1,6 +1,7 @@
 import { router } from 'expo-router';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import {
+  Alert,
   FlatList,
   Image,
   KeyboardAvoidingView,
@@ -112,7 +113,8 @@ export default function MensajesScreen() {
     });
     setSending(false);
     if (error) {
-      console.log('[mensajes] send error:', error);
+      console.log('[mensajes] send error:', error.code, error.message);
+      Alert.alert('No se pudo enviar', 'Intenta de nuevo en un momento.');
       setDraft(text);
       return;
     }

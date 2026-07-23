@@ -19,7 +19,7 @@ const AnimatedPressable = Animated.createAnimatedComponent(Pressable);
 
 const NAV_ITEMS: { label: string; icon: string; href: Href }[] = [
   { label: 'Inicio', icon: '🏠', href: '/home' },
-  { label: 'Entrenamiento', icon: '💪', href: '/entrenamiento-hoy' },
+  { label: 'Entrenamiento', icon: '💪', href: '/entrenamiento' },
   { label: 'Check-in', icon: '📋', href: '/check-in' },
   { label: 'Mensajes', icon: '💬', href: '/mensajes' },
 ];
